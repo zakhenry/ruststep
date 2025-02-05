@@ -3,7 +3,7 @@
 use nom::Finish;
 use ruststep::ast::{EntityInstance, Name, Parameter};
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::PathBuf;
 
@@ -27,7 +27,8 @@ struct NonDependentPDet {
     property_bsu_id: u64,
     item_name_id: u64,
     mathematical_string_id: u64,
-    version: String,
+    data_type_id: u64,
+    revision: String,
 }
 
 
@@ -44,6 +45,7 @@ struct MathematicalString(String);
 struct DictionaryData {
     class_bsus: HashMap<u64, BSU>,
     property_bsus: HashMap<u64, BSU>,
+    data_types: HashMap<u64, DataType>,
     non_dependent_p_dets: HashMap<u64, NonDependentPDet>,
     item_labels: HashMap<u64, ItemLabel>,
     mathematical_strings: HashMap<u64, MathematicalString>,
@@ -62,6 +64,7 @@ struct Property {
     mathematical_string: MathematicalString,
     item_label: ItemLabel,
     non_dependent_p_det: NonDependentPDet,
+    data_type: DataType,
 }
 
 #[derive(Debug, Default)]
@@ -70,20 +73,38 @@ struct Dictionary {
     properties: Vec<Property>,
 }
 
+#[derive(Debug, Clone)]
+enum DataType {
+    String { format: String },
+    RealMeasure { format: String, unit_id: u64 },
+    Integer { format: String },
+    Boolean { format: String },
+    Unimplemented { id: u64 },
+}
+
+impl Display for DataType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self) // @todo
+    }
+}
+
 impl Property {
     fn format_characteristic(&self) -> String {
         format!("\
 Code: {}
 Version: {}
-Revision:
+Revision: {}
 Short Name: {}
 Symbol: {}
 Description: {}
+Data Type: {}
 ", &self.bsu.code,
                 &self.bsu.version,
+                &self.non_dependent_p_det.revision,
                 &self.item_label.short_name.clone().unwrap_or("?".to_string()),
                 &self.mathematical_string.0,
-                &self.item_label.description.clone().unwrap_or("?".to_string())
+                &self.item_label.description.clone().unwrap_or("?".to_string()),
+                &self.data_type
         )
     }
 }
@@ -102,9 +123,9 @@ fn get_owned() {
 
                 // println!("#{id} {}", record.name);
 
-                match record.name.as_str() {
-                    "CLASS_BSU" | "PROPERTY_BSU" => {
-                        if let Parameter::List(params) = &record.parameter {
+                if let Parameter::List(params) = &record.parameter {
+                    match record.name.as_str() {
+                        "CLASS_BSU" | "PROPERTY_BSU" => {
                             if let [Parameter::String(name), Parameter::String(version)] = &params[0..2] {
                                 let bsu = BSU {
                                     code: name.clone(),
@@ -118,14 +139,12 @@ fn get_owned() {
                                 };
                             }
                         }
-                    }
-                    // #10492=NON_DEPENDENT_P_DET(#10493, #10499, '001', #10494, TEXT('Angle of the chamfer on the head of a tool item measured between the negative z axis and the chamfer'), $, $, $, #10500, (), #13260, $, #10495, $);
-                    "NON_DEPENDENT_P_DET" => {
-                        if let Parameter::List(params) = &record.parameter {
+                        // #10492=NON_DEPENDENT_P_DET(#10493, #10499, '001', #10494, TEXT('Angle of the chamfer on the head of a tool item measured between the negative z axis and the chamfer'), $, $, $, #10500, (), #13260, $, #10495, $);
+                        "NON_DEPENDENT_P_DET" => {
                             if let [
                             Parameter::Ref(Name::Entity(property_bsu)),
                             Parameter::Ref(_dates),
-                            Parameter::String(version),
+                            Parameter::String(revision),
                             Parameter::Ref(Name::Entity(item_names)),
                             Parameter::Typed { keyword: _, parameter: description_parameter },
                             _,
@@ -135,25 +154,24 @@ fn get_owned() {
                             _synonymous_symbols,
                             _referenced_graphic_id,
                             _,
-                            _format
-                            ] = &params[0..11] {
+                            Parameter::Ref(Name::Entity(value_id)),
+                            ] = &params[0..13] {
                                 if let Parameter::String(description) = &**description_parameter {
                                     let ndpd = NonDependentPDet {
                                         description: description.clone(),
                                         property_bsu_id: *property_bsu,
                                         item_name_id: *item_names,
-                                        version: version.clone(),
+                                        revision: revision.clone(),
                                         mathematical_string_id: *mathematical_string_id,
+                                        data_type_id: *value_id,
                                     };
 
                                     dictionary_data.non_dependent_p_dets.insert(*id, ndpd);
                                 }
                             }
                         }
-                    }
-                    // #11630=ITEM_NAMES(LABEL('tool assembly length'), (), LABEL('tooasslen'), $, $);
-                    "ITEM_NAMES" => {
-                        if let Parameter::List(params) = &record.parameter {
+                        // #11630=ITEM_NAMES(LABEL('tool assembly length'), (), LABEL('tooasslen'), $, $);
+                        "ITEM_NAMES" => {
                             if let [
                             Parameter::Typed { keyword: _, parameter: label_parameter },
                             _maybe_synonym,
@@ -174,10 +192,8 @@ fn get_owned() {
                                 dictionary_data.item_labels.insert(*id, label);
                             }
                         }
-                    }
 
-                    "MATHEMATICAL_STRING" => {
-                        if let Parameter::List(params) = &record.parameter {
+                        "MATHEMATICAL_STRING" => {
                             if let [
                             Parameter::String(s),
                             _
@@ -187,9 +203,51 @@ fn get_owned() {
                                 dictionary_data.mathematical_strings.insert(*id, mathematical_string);
                             }
                         }
-                    }
-                    other => {
-                        // println!("unhandled record {}", other);
+
+                        "REAL_MEASURE_TYPE" => {
+                            if let [
+                            Parameter::String(format),
+                            Parameter::Ref(Name::Entity(value_id))
+                            ] = &params[0..2] {
+                                let measure = DataType::RealMeasure { format: format.clone(), unit_id: *value_id };
+
+                                dictionary_data.data_types.insert(*id, measure);
+                            }
+                        }
+
+                        "INT_TYPE" => {
+                            if let [
+                            Parameter::String(format),
+                            ] = &params[0..1] {
+                                let measure = DataType::Integer { format: format.clone() };
+
+                                dictionary_data.data_types.insert(*id, measure);
+                            }
+                        }
+
+                        "BOOLEAN_TYPE" => {
+                            if let [
+                            Parameter::String(format),
+                            ] = &params[0..1] {
+                                let measure = DataType::Boolean { format: format.clone() };
+
+                                dictionary_data.data_types.insert(*id, measure);
+                            }
+                        }
+
+                        //                                                                                                                                      v this is the argument that lists the applicable PROPERTY_BSU references
+                        // #2159=ITEM_CLASS(#2160, #3597, '002', #2161, TEXT('Family of items designed for use mainly in drilling operations'), $, $, $, #2154, (#1922,#782,#794,#788,#726,#1214,#1973,#1294,#327,#324,#385,#2370,#3353,#777,#344,#2542,#2532,#859,#4886,#2878,#846,#1256,#1262,#1280,#190,#1288,#429,#422,#283,#310 ,#2449,#10096,#10273,#10667,#10675,#11008,#12767,#12754,#12761), (), $, (), (), $);
+                        "ITEM_CLASS" => {
+
+                            // @todo parse this message, add references to data dict so each
+                            // property can reference the class they are directly applied to
+                            // also extend to model the hierarchy as a tree
+
+                        }
+
+                        other => {
+                            // println!("unhandled record {}", other);
+                        }
                     }
                 }
             }
@@ -207,6 +265,7 @@ fn get_owned() {
             // mathematical_string: dictionary_data.mathematical_strings[&non_dependent_p_det.],
             item_label: dictionary_data.item_labels[&non_dependent_p_det.item_name_id].clone(),
             mathematical_string: dictionary_data.mathematical_strings[&non_dependent_p_det.mathematical_string_id].clone(),
+            data_type: dictionary_data.data_types.get(&non_dependent_p_det.data_type_id).unwrap_or(&DataType::Unimplemented { id: non_dependent_p_det.data_type_id.clone() }).clone(),
             non_dependent_p_det: non_dependent_p_det.clone(),
         };
 
