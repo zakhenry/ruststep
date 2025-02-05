@@ -6,8 +6,8 @@ use nom::{branch::alt, combinator::value, Parser};
 
 /// list = `(` \[ [parameter] { `,` [parameter] } \] `)` .
 pub fn list(input: &str) -> ParseResult<Parameter> {
-    tuple_((char_('('), comma_separated(parameter), char_(')')))
-        .map(|(_open, params, _close)| Parameter::List(params))
+    tuple_((char_('('), opt_(comma_separated(parameter)), char_(')')))
+        .map(|(_open, params, _close)| Parameter::List(params.unwrap_or_default()))
         .parse(input)
 }
 

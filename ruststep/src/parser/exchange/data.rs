@@ -94,4 +94,16 @@ mod tests {
         dbg!(record);
         assert_eq!(res, "");
     }
+
+    #[test]
+    fn nested_ref() {
+        let (res, record) = super::simple_record(
+            // "FOO( BAR( 1.00000000000000 ), #123, (#456, #789) )",
+            "NON_DEPENDENT_P_DET(#10102, #10108, '001', #10103, TEXT('Minimum allowed slot width to avoid interference between the tool body and workpiece'), $, $, $, #10104, (), $, $, #10105, $);",
+        )
+        .finish()
+        .unwrap();
+        dbg!(record);
+        assert_eq!(res, "");
+    }
 }
