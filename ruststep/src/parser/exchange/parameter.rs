@@ -6,8 +6,8 @@ use nom::{branch::alt, combinator::value, Parser};
 
 /// list = `(` \[ [parameter] { `,` [parameter] } \] `)` .
 pub fn list(input: &str) -> ParseResult<Parameter> {
-    tuple_((char_('('), comma_separated(parameter), char_(')')))
-        .map(|(_open, params, _close)| Parameter::List(params))
+    tuple_((char_('('), opt_(comma_separated(parameter)), char_(')')))
+        .map(|(_open, params, _close)| Parameter::List(params.unwrap_or_default()))
         .parse(input)
 }
 
@@ -65,5 +65,23 @@ mod tests {
         let (res, record) = super::untyped_parameter("2.0").finish().unwrap();
         assert_eq!(res, "");
         assert_eq!(record, Parameter::real(2.0));
+    }
+
+    #[test]
+    fn parameter_list() {
+        let (res, record) = super::untyped_parameter("(1, 2, 3)").finish().unwrap();
+        assert_eq!(res, "");
+        assert_eq!(record, Parameter::List(vec![
+            Parameter::Integer(1),
+            Parameter::Integer(2),
+            Parameter::Integer(3),
+        ]));
+    }
+
+    #[test]
+    fn empty_parameter_list() {
+        let (res, record) = super::untyped_parameter("()").finish().unwrap();
+        assert_eq!(res, "");
+        assert_eq!(record, Parameter::List(vec![]));
     }
 }
