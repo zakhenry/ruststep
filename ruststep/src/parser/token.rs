@@ -12,6 +12,8 @@ use nom::{
     sequence::tuple,
     Parser,
 };
+use nom::bytes::complete::tag;
+use nom::combinator::map;
 
 /// sign = `+` | `-` .
 pub fn sign(input: &str) -> ParseResult<char> {
@@ -68,7 +70,12 @@ pub fn real(input: &str) -> ParseResult<f64> {
 
 /// string = `'` { [special] | [digit] | [space] | [lower] | [upper] | high_codepoint | [apostrophe] [apostrophe] | [reverse_solidus] [reverse_solidus] | control_directive } `'` .
 pub fn string(input: &str) -> ParseResult<String> {
-    tuple((char('\''), many0(none_of("'")), char('\'')))
+    let escaped_char = map(tag("''"), |_| '\''); // Parse '' as a single '
+    let normal_char = none_of("'"); // Parse any character except '
+
+    let string_content = many0(escaped_char.or(normal_char.map(|c| c)));
+
+    tuple((char('\''), string_content, char('\'')))
         .map(|(_start, s, _end)| s.iter().collect())
         .parse(input)
 }
@@ -257,6 +264,14 @@ mod tests {
         let (res, s) = super::string("'vim'").finish().unwrap();
         assert_eq!(res, "");
         assert_eq!(s, "vim");
+    }
+
+
+    #[test]
+    fn escaped_string() {
+        let (res, s) = super::string("'vim''s'").finish().unwrap();
+        assert_eq!(res, "");
+        assert_eq!(s, "vim's");
     }
 
     #[test]
